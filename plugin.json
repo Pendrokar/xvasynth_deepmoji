@@ -1,0 +1,27 @@
+{
+    "plugin-name": "DeepMoji Plugin",
+    "author": "Pendrokar",
+    "nexus-link": null,
+    "plugin-version": "0.8.0",
+    "plugin-short-description": "Analyses and adjusts emotional modifiers.",
+    "min-app-version": "3.0.0",
+    "install-requires-restart": false,
+    "uninstall-requires-restart": false,
+
+    "front-end-style-files": [],
+
+    "front-end-hooks": {
+    },
+    "back-end-hooks": {
+        "synth-line": {
+            "pre": {
+                "file": "sentiment.py",
+                "function": "fetch_text"
+            },
+            "mid": {
+                "file": "sentiment.py",
+                "function": "adjust_values"
+            }
+        }
+    }
+}
