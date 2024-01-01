@@ -25,6 +25,8 @@ isBatch = False
 isXVAPitch = True
 isEnglish = True
 
+# previous sentence
+prev_sentence = ''
 # Previous emotional modifier values
 last_em_angry = float(0)
 last_em_happy = float(0)
@@ -43,14 +45,19 @@ def setup(data=None):
 		pass
 
 	logger.log(f'Setting up plugin. App version: {data["appVersion"]} | CPU only: {data["isCPUonly"]} | Development mode: {data["isDev"]}')
-	print("Emoji smily console print test: \U0001F604")
+	# Show test emoji in console; can crash due to encoding issues
+	try:
+		print("Emoji smily console print test: \U0001F604")
+	except:
+		pass
 
 def pre_load_model(data=None):
 	# reset last em values
-	global last_em_angry, last_em_happy, last_em_sad, last_em_surprise, isBatch, isXVAPitch, isEnglish
+	global last_em_angry, last_em_happy, last_em_sad, last_em_surprise, isBatch, isXVAPitch, isEnglish, prev_sentence
 	isBatch = False
 	isXVAPitch = True
 	isEnglish = True
+	prev_sentence = ''
 	last_em_angry = float(0)
 	last_em_happy = float(0)
 	last_em_sad = float(0)
@@ -58,7 +65,7 @@ def pre_load_model(data=None):
 	logger.log("last_em reset")
 
 def fetch_text(data=None):
-	global plugin_settings, emotion_count, text_scores, scoreText, isXVAPitch, isEnglish
+	global plugin_settings, emotion_count, text_scores, scoreText, isXVAPitch, isEnglish, prev_sentence
 
 	if (
 		plugin_settings["load_deepmoji_model"]=="false"
@@ -68,21 +75,24 @@ def fetch_text(data=None):
 		return
 
 	if (data['modelType'] != 'xVAPitch'):
-		text_scores = data["sequence"]
+		text_scores = [data["sequence"]]
 		logger.log("DeepMoji can affect only xVAPitch models")
 		isXVAPitch = False
 		return
 	if (data['base_lang'] != 'en'):
-		text_scores = data["sequence"]
+		text_scores = [data["sequence"]]
 		logger.log("DeepMoji works only with English text")
 		isEnglish = False
 		return
 
-	text_scores = scoreText(data["sequence"], emotion_count)
+	# add previous sentence for a better flow
+	text_scores = scoreText(prev_sentence +' '+ data["sequence"], emotion_count)
 	logger.log(text_scores)
 
+	text_scores[0] = data["sequence"]
+
 def fetch_batch_text(data=None):
-	global isBatch, plugin_settings, emotion_count, text_scores, scoreText, isXVAPitch, isEnglish
+	global isBatch, plugin_settings, emotion_count, text_scores, scoreText, isXVAPitch, isEnglish, prev_sentence
 	isBatch = True
 
 	if (
@@ -100,18 +110,18 @@ def fetch_batch_text(data=None):
 		return
 
 	if (data['modelType'] != 'xVAPitch'):
-		text_scores = data["linesBatch"][0][0]
+		text_scores = [data["linesBatch"][0][0]]
 		logger.log("DeepMoji can affect only xVAPitch models")
 		isXVAPitch = False
 		return
 	if (data['base_lang'] != 'en'):
-		text_scores = data["linesBatch"][0][0]
+		text_scores = [data["linesBatch"][0][0]]
 		logger.log("DeepMoji works only with English text")
 		return
 
 	try:
 		logger.log(data["linesBatch"][0][0])
-		text_scores = scoreText(data["linesBatch"][0][0], emotion_count)
+		text_scores = scoreText(prev_sentence +' '+ data["linesBatch"][0][0], emotion_count)
 		logger.log(text_scores)
 	except:
 		logger.log("Could not parse line")
@@ -123,7 +133,10 @@ def fetch_batch_text(data=None):
 #                     'Pct_1', 'Pct_2', 'Pct_3', 'Pct_4', 'Pct_5'])
 
 def adjust_values(data=None):
-	global root_path, os, csv, example_helper, isBatch, isXVAPitch, isEnglish, logger, emotion_count, text_scores, plugin_settings, last_em_angry, last_em_happy, last_em_sad, last_em_surprise
+	global root_path, os, csv, example_helper,\
+		isBatch, isXVAPitch, isEnglish, logger, emotion_count, text_scores, plugin_settings,\
+		prev_sentence, last_em_angry, last_em_happy, last_em_sad, last_em_surprise
+
 	if (isXVAPitch == False):
 		logger.log("DeepMoji can affect only xVAPitch models")
 		return
@@ -171,7 +184,7 @@ def adjust_values(data=None):
 		pass
 
 	em_emotion_max = 0.8
-	em_angry_max = 0.3
+	em_angry_max = 0.4
 	try:
 		em_angry += float(data["pluginsContext"]["mantella_settings"]["emAngry"]) * 100
 		em_angry_max = 0.8
@@ -192,7 +205,11 @@ def adjust_values(data=None):
 		pass
 
 	# top_em highest wins all
-	top_em = max(em_angry, em_happy, em_sad)
+	top_em = max(
+		em_angry,
+		em_happy,
+		em_sad
+	)
 	em_angry = em_angry if (em_angry == top_em) else 0
 	em_happy = em_happy if (em_happy == top_em) else 0
 	# ampified sadness ratio
@@ -256,7 +273,8 @@ def adjust_values(data=None):
 			for char_i in range(len(data["emAngry"][line_i])):
 				data["emAngry"][line_i][char_i] = em_angry
 
-	if (em_happy > 0):
+	if (em_happy > 0 and em_surprise < 0.3):
+		# em_surprise & em_happy overamplify each other
 		logger.log(f"Adjusting em_happy: {em_happy}")
 		for line_i in range(len(data["emHappy"])):
 			for char_i in range(len(data["emHappy"][line_i])):
@@ -273,21 +291,23 @@ def adjust_values(data=None):
 				if (em_sad > 0.2):
 					try:
 						for char_d in range(len(data["duration"][line_i][char_i])):
-							data["duration"][line_i][char_i][char_d] *= (1 + em_sad / 2)
+							data["duration"][line_i][char_i][char_d] *= (1 + em_sad / 3)
 							adjusted_pacing = True
 					except:
 						pass
 		if adjusted_pacing:
 			# FIXME: xVASynth cutoff workaround
 			data["duration"][-1][-1][-1] = 30
-			logger.log(f"Adjusting pacing: {1 + em_sad / 2}")
+			logger.log(f"Adjusting pacing: {1 + em_sad / 3}")
 
-	if (em_surprise > 0):
+	if (em_surprise > 0 and em_happy < 0.3):
+		# em_surprise & em_happy overamplify each other
 		logger.log(f"Adjusting em_surprise: {em_surprise}")
 		for line_i in range(len(data["emSurprise"])):
 			for char_i in range(len(data["emSurprise"][line_i])):
 				data["emSurprise"][line_i][char_i] = em_surprise
 
+	prev_sentence = text_scores[0]
 	last_em_angry = em_angry
 	last_em_happy = em_happy
 	last_em_sad = em_sad
