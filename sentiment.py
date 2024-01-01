@@ -15,13 +15,21 @@ sys.path.append(f"{root_path}/plugins/deepmoji_plugin/DeepMoji")
 # TOP # emoticons out of 64 to take into account
 emotion_count = 10
 text_scores = []
-isBatch = False
 # the plugin's default settings
 plugin_settings = {
 	"use_on_generate": False,
 	"use_on_batch": False,
 	"load_deepmoji_model": True
 }
+isBatch = False
+isXVAPitch = True
+isEnglish = True
+
+# Previous emotional modifier values
+last_em_angry = float(0)
+last_em_happy = float(0)
+last_em_sad = float(0)
+last_em_surprise = float(0)
 
 from plugins.deepmoji_plugin.DeepMoji.xvasynth_torchmoji import scoreText
 import csv
@@ -37,20 +45,44 @@ def setup(data=None):
 	logger.log(f'Setting up plugin. App version: {data["appVersion"]} | CPU only: {data["isCPUonly"]} | Development mode: {data["isDev"]}')
 	print("Emoji smily console print test: \U0001F604")
 
+def pre_load_model(data=None):
+	# reset last em values
+	global last_em_angry, last_em_happy, last_em_sad, last_em_surprise, isBatch, isXVAPitch, isEnglish
+	isBatch = False
+	isXVAPitch = True
+	isEnglish = True
+	last_em_angry = float(0)
+	last_em_happy = float(0)
+	last_em_sad = float(0)
+	last_em_surprise = float(0)
+	logger.log("last_em reset")
+
 def fetch_text(data=None):
-	global plugin_settings, emotion_count, text_scores, scoreText
+	global plugin_settings, emotion_count, text_scores, scoreText, isXVAPitch, isEnglish
 
 	if (
 		plugin_settings["load_deepmoji_model"]=="false"
 		or plugin_settings["load_deepmoji_model"]==False
 	):
 		logger.log("DeepMoji model skipped")
+		return
+
+	if (data['modelType'] != 'xVAPitch'):
+		text_scores = data["sequence"]
+		logger.log("DeepMoji can affect only xVAPitch models")
+		isXVAPitch = False
+		return
+	if (data['base_lang'] != 'en'):
+		text_scores = data["sequence"]
+		logger.log("DeepMoji works only with English text")
+		isEnglish = False
+		return
 
 	text_scores = scoreText(data["sequence"], emotion_count)
 	logger.log(text_scores)
 
 def fetch_batch_text(data=None):
-	global isBatch, plugin_settings, emotion_count, text_scores, scoreText
+	global isBatch, plugin_settings, emotion_count, text_scores, scoreText, isXVAPitch, isEnglish
 	isBatch = True
 
 	if (
@@ -67,6 +99,16 @@ def fetch_batch_text(data=None):
 		logger.log("DeepMoji model skipped")
 		return
 
+	if (data['modelType'] != 'xVAPitch'):
+		text_scores = data["linesBatch"][0][0]
+		logger.log("DeepMoji can affect only xVAPitch models")
+		isXVAPitch = False
+		return
+	if (data['base_lang'] != 'en'):
+		text_scores = data["linesBatch"][0][0]
+		logger.log("DeepMoji works only with English text")
+		return
+
 	try:
 		logger.log(data["linesBatch"][0][0])
 		text_scores = scoreText(data["linesBatch"][0][0], emotion_count)
@@ -81,7 +123,10 @@ def fetch_batch_text(data=None):
 #                     'Pct_1', 'Pct_2', 'Pct_3', 'Pct_4', 'Pct_5'])
 
 def adjust_values(data=None):
-	global root_path, os, csv, example_helper, isBatch, logger, emotion_count, text_scores, plugin_settings
+	global root_path, os, csv, example_helper, isBatch, isXVAPitch, isEnglish, logger, emotion_count, text_scores, plugin_settings, last_em_angry, last_em_happy, last_em_sad, last_em_surprise
+	if (isXVAPitch == False):
+		logger.log("DeepMoji can affect only xVAPitch models")
+		return
 
 	if (
 		isBatch
@@ -98,24 +143,26 @@ def adjust_values(data=None):
 	em_sad = float(0)
 	em_surprise = float(0)
 	emojis = ''
-	with open(f'{root_path}/plugins/deepmoji_plugin/emoji_unicode_emotions.csv', encoding='utf-8') as csvfile:
-		reader = csv.DictReader(csvfile)
-		index = 0
-		for emoji_row in reader:
-			if (len(text_scores) == 0):
-				break
-			for em_index in range(emotion_count):
-				# emotion is not one of detected emotions?
-				if (index != text_scores[2 + em_index]):
-					# skip
-					continue
 
-				em_angry += float(emoji_row['anger']) * float(text_scores[2 + em_index + emotion_count])
-				em_happy += float(emoji_row['happiness']) * float(text_scores[2 + em_index + emotion_count])
-				em_sad += float(emoji_row['sadness']) * float(text_scores[2 + em_index + emotion_count])
-				em_surprise += float(emoji_row['surprise']) * float(text_scores[2 + em_index + emotion_count])
-				emojis += emoji_row['emoji']+' '
-			index += 1
+	if (isEnglish and len(text_scores) > 1):
+		# DeepMoji works only with English text
+		with open(f'{root_path}/plugins/deepmoji_plugin/emoji_unicode_emotions.csv', encoding='utf-8') as csvfile:
+			reader = csv.DictReader(csvfile)
+			index = 0
+			for emoji_row in reader:
+				for em_index in range(emotion_count):
+					# emotion is not one of detected emotions?
+					if (index != text_scores[2 + em_index]):
+						# skip
+						continue
+
+					em_angry += float(emoji_row['anger']) * float(text_scores[2 + em_index + emotion_count])
+					em_happy += float(emoji_row['happiness']) * float(text_scores[2 + em_index + emotion_count])
+					em_sad += float(emoji_row['sadness']) * float(text_scores[2 + em_index + emotion_count])
+					em_surprise += float(emoji_row['surprise']) * float(text_scores[2 + em_index + emotion_count])
+					emojis += emoji_row['emoji']+' '
+				index += 1
+
 	# Show Top emojis in console
 	try:
 		# can crash on batch
@@ -144,11 +191,12 @@ def adjust_values(data=None):
 	except:
 		pass
 
-	# highest wins all
-	em_angry = em_angry if (em_angry == max(em_angry, em_happy, em_sad)) else 0
-	em_happy = em_happy if (em_happy == max(em_angry, em_happy, em_sad)) else 0
+	# top_em highest wins all
+	top_em = max(em_angry, em_happy, em_sad)
+	em_angry = em_angry if (em_angry == top_em) else 0
+	em_happy = em_happy if (em_happy == top_em) else 0
 	# ampified sadness ratio
-	em_sad = (em_sad * 3) if (em_sad == max(em_angry, em_happy, em_sad)) else 0
+	em_sad = (em_sad * 3) if (em_sad == top_em) else 0
 
 	# amplifier
 	ratio = 1.5
@@ -165,13 +213,43 @@ def adjust_values(data=None):
 		em_angry_max = max(0.7, em_angry_max)
 		logger.log(f"! detected => em_angry_max: {em_angry_max}")
 
-	em_angry = min(em_angry_max, em_angry / 100 * ratio)
-	em_happy = min(em_emotion_max, em_happy / 100 * ratio)
-	em_sad = min(em_emotion_max, em_sad / 100 * ratio)
-	em_surprise = min(em_emotion_max, em_surprise / 100 * ratio)
-	# def lerp(v1, v2, d):
-	# 	return v1 * (1 - d) + v2 * d
+	em_angry = min(em_angry_max, em_angry / 100 * ratio) if em_angry > 0 else 0
+	em_happy = min(em_emotion_max, em_happy / 100 * ratio) if em_happy > 0 else 0
+	em_sad = min(em_emotion_max, em_sad / 100 * ratio) if em_sad > 0 else 0
+	em_surprise = min(em_emotion_max, em_surprise / 100 * ratio) if em_surprise > 0 else 0
 
+	# do average of previous if above threshold and last_em is not higher
+	last_top_em = max(last_em_angry, last_em_happy, last_em_sad)
+	if (
+		(em_angry > 0)
+		and (last_top_em > 0.1)
+		and (last_top_em < em_angry)
+	):
+		logger.log(f"em_angry before avg: {em_angry}")
+		em_angry = (em_angry + last_top_em) / 2
+	if (
+		(em_happy > 0)
+		and (last_top_em > 0.1)
+		and (last_top_em < em_happy)
+	):
+		logger.log(f"em_happy before avg: {em_happy}")
+		em_happy = (em_happy + last_top_em) / 2
+	if (
+		(em_sad > 0)
+		and (last_top_em > 0.1)
+		and (last_top_em < em_sad)
+	):
+		logger.log(f"em_sad before avg: {em_sad}")
+		em_sad = (em_sad + last_top_em) / 2
+	if (
+		(em_surprise > 0)
+		and (last_em_surprise > 0.05)
+		and (last_em_surprise < em_surprise)
+	):
+		logger.log(f"em_surprise before avg: {em_surprise}")
+		em_surprise = (em_surprise + last_em_surprise) / 2
+
+	# adjust the values within data
 	if (em_angry > 0):
 		logger.log(f"Adjusting em_angry: {em_angry}")
 		for line_i in range(len(data["emAngry"])):
@@ -190,13 +268,15 @@ def adjust_values(data=None):
 		for line_i in range(len(data["emSad"])):
 			for char_i in range(len(data["emSad"][line_i])):
 				data["emSad"][line_i][char_i] = em_sad
-				# slower the speech
-				try:
-					for char_d in range(len(data["duration"][line_i][char_i])):
-						data["duration"][line_i][char_i][char_d] *= (1 + em_sad / 2)
-						adjusted_pacing = True
-				except:
-					pass
+
+				# slower the speech if above threshold
+				if (em_sad > 0.2):
+					try:
+						for char_d in range(len(data["duration"][line_i][char_i])):
+							data["duration"][line_i][char_i][char_d] *= (1 + em_sad / 2)
+							adjusted_pacing = True
+					except:
+						pass
 		if adjusted_pacing:
 			# FIXME: xVASynth cutoff workaround
 			data["duration"][-1][-1][-1] = 30
@@ -207,4 +287,10 @@ def adjust_values(data=None):
 		for line_i in range(len(data["emSurprise"])):
 			for char_i in range(len(data["emSurprise"][line_i])):
 				data["emSurprise"][line_i][char_i] = em_surprise
+
+	last_em_angry = em_angry
+	last_em_happy = em_happy
+	last_em_sad = em_sad
+	last_em_surprise = em_surprise
+
 	return
