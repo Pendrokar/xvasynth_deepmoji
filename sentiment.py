@@ -1,6 +1,11 @@
 import os
 from os.path import abspath, dirname
 
+import configparser
+import logging
+import os
+import sys
+
 isDev = setupData["isDev"]
 logger = setupData["logger"]
 
@@ -13,14 +18,10 @@ if not isDev:
 sys.path.append(f"{root_path}/plugins/deepmoji_plugin/DeepMoji")
 
 # TOP # emoticons out of 64 to take into account
-emotion_count = 10
+emoji_count = 10
 text_scores = []
 # the plugin's default settings
-plugin_settings = {
-	"use_on_generate": False,
-	"use_on_batch": False,
-	"load_deepmoji_model": True
-}
+plugin_settings = {}
 isBatch = False
 isXVAPitch = True
 isEnglish = True
@@ -33,27 +34,32 @@ last_em_happy = float(0)
 last_em_sad = float(0)
 last_em_surprise = float(0)
 
-from plugins.deepmoji_plugin.DeepMoji.xvasynth_torchmoji import scoreText
+from plugins.deepmoji_plugin.xvasynth_torchmoji import scoreText
 import csv
 
 def setup(data=None):
-	global plugin_settings
-	try:
-		plugin_settings = data["pluginsContext"]["deepmoji_plugin_settings"]
-	except:
-		logger.warning("Plugin settings not loaded")
-		pass
-
 	logger.log(f'Setting up plugin. App version: {data["appVersion"]} | CPU only: {data["isCPUonly"]} | Development mode: {data["isDev"]}')
 	# Show test emoji in console; can crash due to encoding issues
 	try:
-		print("Emoji smily console print test: \U0001F604")
+		print("DeepMoji Plugin - emoji smily console print test: \U0001F604")
 	except:
 		pass
 
 def pre_load_model(data=None):
 	# reset last em values
-	global last_em_angry, last_em_happy, last_em_sad, last_em_surprise, isBatch, isXVAPitch, isEnglish, prev_sentence
+	global last_em_angry, last_em_happy, last_em_sad, last_em_surprise,\
+		isBatch, isXVAPitch, isEnglish, prev_sentence,\
+		plugin_settings, configparser, emoji_count
+
+	# reload settings from INI
+	config = configparser.ConfigParser()
+	with open(f'{root_path}/plugins/deepmoji_plugin/deepmoji.ini', encoding='utf-8') as stream:
+		# xVASynth saves without INI sections
+	    config.read_string("[top]\n" + stream.read())
+	plugin_settings = dict(config['top'])
+
+	emoji_count = int(plugin_settings['emoji_count'])
+
 	isBatch = False
 	isXVAPitch = True
 	isEnglish = True
@@ -65,7 +71,17 @@ def pre_load_model(data=None):
 	logger.log("last_em reset")
 
 def fetch_text(data=None):
-	global plugin_settings, emotion_count, text_scores, scoreText, isXVAPitch, isEnglish, prev_sentence
+	global plugin_settings, emoji_count, text_scores, scoreText, isXVAPitch, isEnglish, prev_sentence
+	isBatch = False
+
+	text_scores = [data["sequence"]]
+	try:
+		# editor second generation test
+		if len(data["pitch"]):
+			logger.warning("DeepMoji analysis skipped due to customized editor values")
+			return
+	except:
+		pass
 
 	if (
 		plugin_settings["load_deepmoji_model"]=="false"
@@ -75,56 +91,69 @@ def fetch_text(data=None):
 		return
 
 	if (data['modelType'] != 'xVAPitch'):
-		text_scores = [data["sequence"]]
 		logger.log("DeepMoji can affect only xVAPitch models")
 		isXVAPitch = False
 		return
 	if (data['base_lang'] != 'en'):
-		text_scores = [data["sequence"]]
 		logger.log("DeepMoji works only with English text")
 		isEnglish = False
 		return
 
+	if (
+		plugin_settings["append_prev_sentence"]=="false"
+		or plugin_settings["append_prev_sentence"]==False
+	):
+		prev_sentence = ''
+	else:
+		prev_sentence += ' '
+
 	# add previous sentence for a better flow
-	text_scores = scoreText(prev_sentence +' '+ data["sequence"], emotion_count)
+	text_scores = scoreText(prev_sentence + data["sequence"], emoji_count)
 	logger.log(text_scores)
 
 	text_scores[0] = data["sequence"]
 
 def fetch_batch_text(data=None):
-	global isBatch, plugin_settings, emotion_count, text_scores, scoreText, isXVAPitch, isEnglish, prev_sentence
+	global isBatch, plugin_settings, emoji_count, text_scores, scoreText, isXVAPitch, isEnglish, prev_sentence
 	isBatch = True
 
+	text_scores = [data["linesBatch"][0][0]]
 	if (
 		plugin_settings["use_on_batch"]=="false"
 		or plugin_settings["use_on_batch"]==False
 	):
-		logger.log("DeepMoji Plugin skipped on batch")
+		logger.debug("DeepMoji Plugin skipped on batch")
 		return
 
 	if (
 		plugin_settings["load_deepmoji_model"]=="false"
 		or plugin_settings["load_deepmoji_model"]==False
 	):
-		logger.log("DeepMoji model skipped")
+		logger.debug("DeepMoji model skipped")
 		return
 
 	if (data['modelType'] != 'xVAPitch'):
-		text_scores = [data["linesBatch"][0][0]]
-		logger.log("DeepMoji can affect only xVAPitch models")
+		logger.debug("DeepMoji can affect only xVAPitch models")
 		isXVAPitch = False
 		return
 	if (data['base_lang'] != 'en'):
-		text_scores = [data["linesBatch"][0][0]]
-		logger.log("DeepMoji works only with English text")
+		logger.debug("DeepMoji works only with English text")
 		return
 
+	if (
+		plugin_settings["append_prev_sentence"]=="false"
+		or plugin_settings["append_prev_sentence"]==False
+	):
+		prev_sentence = ''
+	else:
+		prev_sentence += ' '
+
 	try:
-		logger.log(data["linesBatch"][0][0])
-		text_scores = scoreText(prev_sentence +' '+ data["linesBatch"][0][0], emotion_count)
-		logger.log(text_scores)
+		logger.debug(data["linesBatch"][0][0])
+		text_scores = scoreText(prev_sentence + data["linesBatch"][0][0], emoji_count)
+		logger.debug(text_scores)
 	except:
-		logger.log("Could not parse line")
+		logger.error("Could not parse line")
 		return
 
 # text_scores
@@ -134,12 +163,8 @@ def fetch_batch_text(data=None):
 
 def adjust_values(data=None):
 	global root_path, os, csv, example_helper,\
-		isBatch, isXVAPitch, isEnglish, logger, emotion_count, text_scores, plugin_settings,\
+		isBatch, isXVAPitch, isEnglish, logger, emoji_count, text_scores, plugin_settings,\
 		prev_sentence, last_em_angry, last_em_happy, last_em_sad, last_em_surprise
-
-	if (isXVAPitch == False):
-		logger.log("DeepMoji can affect only xVAPitch models")
-		return
 
 	if (
 		isBatch
@@ -148,7 +173,11 @@ def adjust_values(data=None):
 			or plugin_settings["use_on_batch"] == False
 		)
 	):
-		logger.log("DeepMoji Plugin skipped on batch")
+		logger.debug("DeepMoji Plugin skipped on batch")
+		return
+
+	if (isXVAPitch == False):
+		logger.log("DeepMoji can affect only xVAPitch models")
 		return
 
 	em_angry = float(0)
@@ -157,22 +186,26 @@ def adjust_values(data=None):
 	em_surprise = float(0)
 	emojis = ''
 
-	if (isEnglish and len(text_scores) > 1):
+	if (
+		isXVAPitch
+		and isEnglish
+		and len(text_scores) > 1
+	):
 		# DeepMoji works only with English text
 		with open(f'{root_path}/plugins/deepmoji_plugin/emoji_unicode_emotions.csv', encoding='utf-8') as csvfile:
 			reader = csv.DictReader(csvfile)
 			index = 0
 			for emoji_row in reader:
-				for em_index in range(emotion_count):
+				for em_index in range(emoji_count):
 					# emotion is not one of detected emotions?
 					if (index != text_scores[2 + em_index]):
 						# skip
 						continue
 
-					em_angry += float(emoji_row['anger']) * float(text_scores[2 + em_index + emotion_count])
-					em_happy += float(emoji_row['happiness']) * float(text_scores[2 + em_index + emotion_count])
-					em_sad += float(emoji_row['sadness']) * float(text_scores[2 + em_index + emotion_count])
-					em_surprise += float(emoji_row['surprise']) * float(text_scores[2 + em_index + emotion_count])
+					em_angry += float(emoji_row['anger']) * float(text_scores[2 + em_index + emoji_count])
+					em_happy += float(emoji_row['happiness']) * float(text_scores[2 + em_index + emoji_count])
+					em_sad += float(emoji_row['sadness']) * float(text_scores[2 + em_index + emoji_count])
+					em_surprise += float(emoji_row['surprise']) * float(text_scores[2 + em_index + emoji_count])
 					emojis += emoji_row['emoji']+' '
 				index += 1
 
@@ -212,28 +245,37 @@ def adjust_values(data=None):
 	)
 	em_angry = em_angry if (em_angry == top_em) else 0
 	em_happy = em_happy if (em_happy == top_em) else 0
-	# ampified sadness ratio
+	# amplified sadness ratio
 	em_sad = (em_sad * 3) if (em_sad == top_em) else 0
 
 	# amplifier
-	ratio = 1.5
+	ratio = float(plugin_settings['amplifier_ratio'])
+	logger.log(f'Amplifier ratio: {ratio}')
 	if ('!!!' in text_scores[0]):
-		ratio += 1.5
-		em_angry_max = 0.9
+		ratio += 2
+		em_angry_max = 1.0
 		logger.log(f"!!! detected => em_angry_max: {em_angry_max}")
-	elif (('!!' in text_scores[0]) or ('!?!' in text_scores[0])):
-		ratio += 1.25
-		em_angry_max = 0.8
+		logger.log(f'!!! Ratio: {ratio}')
+	elif (
+		('!!' in text_scores[0])
+		or ('!?!' in text_scores[0])
+	):
+		ratio += 1.5
+		em_angry_max = 0.85
 		logger.log(f"!! detected => em_angry_max: {em_angry_max}")
+		logger.log(f'!! Ratio: {ratio}')
 	elif ('!' in text_scores[0]):
 		ratio += 1
 		em_angry_max = max(0.7, em_angry_max)
 		logger.log(f"! detected => em_angry_max: {em_angry_max}")
+		logger.log(f'! Ratio: {ratio}')
 
+	# final values
 	em_angry = min(em_angry_max, em_angry / 100 * ratio) if em_angry > 0 else 0
 	em_happy = min(em_emotion_max, em_happy / 100 * ratio) if em_happy > 0 else 0
 	em_sad = min(em_emotion_max, em_sad / 100 * ratio) if em_sad > 0 else 0
 	em_surprise = min(em_emotion_max, em_surprise / 100 * ratio) if em_surprise > 0 else 0
+
 
 	# do average of previous if above threshold and last_em is not higher
 	last_top_em = max(last_em_angry, last_em_happy, last_em_sad)
@@ -265,6 +307,7 @@ def adjust_values(data=None):
 	):
 		logger.log(f"em_surprise before avg: {em_surprise}")
 		em_surprise = (em_surprise + last_em_surprise) / 2
+
 
 	# adjust the values within data
 	if (em_angry > 0):

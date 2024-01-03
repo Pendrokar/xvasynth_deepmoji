@@ -21,22 +21,6 @@ const setupSettings = () => {
     }
 
     hasShownModal = true
-
-    // setTimeout(() => {
-    //     if (window.userSettings.audio.hz!=44100 || window.userSettings.audio.bitdepth!="pcm_s16le" || window.userSettings.audio.format!="wav") {
-    //         window.confirmModal(`The ffmpeg audio settings for deepmoji_plugin need to be:<br>Hz: 44100 (Yours: ${window.userSettings.audio.hz})<br>Bit depth: pcm_s16le (Yours: ${window.userSettings.audio.bitdepth})<br>Format: .wav (Yours: .${window.userSettings.audio.format})<br><br>Change your settings to these?`).then(resp => {
-    //             if (resp) {
-    //                 window.userSettings.audio.hz = 44100
-    //                 setting_audio_hz.value = 44100
-    //                 window.userSettings.audio.bitdepth = "pcm_s16le"
-    //                 setting_audio_bitdepth.value = "pcm_s16le"
-    //                 window.userSettings.audio.format = "wav"
-    //                 setting_audio_format.value = "wav"
-    //                 window.saveUserSettings()
-    //             }
-    //         })
-    //     }
-    // }, 1000)
 }
 
 const setup = () => {
