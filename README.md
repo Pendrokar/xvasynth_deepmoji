@@ -2,6 +2,8 @@
 
 A plugin for DanRuta/xVASynth
 
+Link to plugin on Nexus Mods page: [https://www.nexusmods.com/skyrimspecialedition/mods/107142?tab=description](https://www.nexusmods.com/skyrimspecialedition/mods/107142?tab=description)
+
 # How it works?
 
 During TTS synthesis, the plugin adjusts the 4 possible emotional modifier values of phonemes equaly for xVAPitch (v3) models.
